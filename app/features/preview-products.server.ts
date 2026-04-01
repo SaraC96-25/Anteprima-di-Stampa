@@ -53,9 +53,6 @@ export type PreviewProductsActionData = {
 
 type ProductsQueryResponse = {
   data?: {
-    metafieldDefinition: {
-      id: string;
-    } | null;
     products: {
       edges: Array<{
         node: {
@@ -94,6 +91,25 @@ type ProductsQueryResponse = {
     message: string;
   }>;
 };
+
+type CollectionsQueryResponse = {
+  data?: {
+    collections: {
+      edges: Array<{
+        node: {
+          id: string;
+          title: string;
+        };
+      }>;
+    };
+  };
+  errors?: Array<{
+    message: string;
+  }>;
+};
+
+type ProductEdge = NonNullable<ProductsQueryResponse["data"]>["products"]["edges"][number];
+type CollectionEdge = NonNullable<CollectionsQueryResponse["data"]>["collections"]["edges"][number];
 
 type MetafieldsSetResponse = {
   data?: {
@@ -212,65 +228,90 @@ export async function previewProductsLoader({
   const url = new URL(request.url);
   const search = url.searchParams.get("search")?.trim() ?? "";
   const collectionId = normalizeCollectionId(url.searchParams.get("collectionId"));
+  let productEdges: ProductEdge[] = [];
+  let collectionEdges: CollectionEdge[] = [];
+  let definitionExists = false;
 
-  const response = await admin.graphql(
-    `#graphql
-      query PreviewProducts {
-        metafieldDefinition(
-          identifier: {
-            ownerType: PRODUCT
-            namespace: "$app"
-            key: "preview_enabled"
-          }
-        ) {
-          id
-        }
-        products(first: 50, query: $query, sortKey: TITLE) {
-          edges {
-            node {
-              id
-              title
-              handle
-              status
-              collections(first: 20) {
-                edges {
-                  node {
-                    id
-                    title
+  try {
+    const productsResponse = await admin.graphql(
+      `#graphql
+        query PreviewProducts {
+          products(first: 100, sortKey: TITLE) {
+            edges {
+              node {
+                id
+                title
+                handle
+                status
+                collections(first: 20) {
+                  edges {
+                    node {
+                      id
+                      title
+                    }
                   }
                 }
-              }
-              featuredImage {
-                url
-                altText
-              }
-              previewEnabled: metafield(namespace: "$app", key: "preview_enabled") {
-                value
+                featuredImage {
+                  url
+                  altText
+                }
+                previewEnabled: metafield(namespace: "$app", key: "preview_enabled") {
+                  value
+                }
               }
             }
           }
         }
-        collections(first: 100, sortKey: TITLE) {
-          edges {
-            node {
-              id
-              title
-            }
-          }
-        }
-      }
-    `,
-  );
+      `,
+    );
 
-  const data = (await response.json()) as ProductsQueryResponse;
-  const productEdges = data.data?.products?.edges ?? [];
-  const collectionEdges = data.data?.collections?.edges ?? [];
+    const productsData = (await productsResponse.json()) as ProductsQueryResponse;
 
-  if (data.errors?.length) {
-    console.error("Preview products query failed", data.errors);
+    if (productsData.errors?.length) {
+      console.error("Preview products query failed", productsData.errors);
+    }
+
+    productEdges = productsData.data?.products?.edges ?? [];
+  } catch (error) {
+    console.error("Preview products query crashed", error);
   }
 
-  const mappedProducts = productEdges.map((edge) => ({
+  try {
+    const collectionsResponse = await admin.graphql(
+      `#graphql
+        query PreviewCollections {
+          collections(first: 100, sortKey: TITLE) {
+            edges {
+              node {
+                id
+                title
+              }
+            }
+          }
+        }
+      `,
+    );
+
+    const collectionsData =
+      (await collectionsResponse.json()) as CollectionsQueryResponse;
+
+    if (collectionsData.errors?.length) {
+      console.error("Preview collections query failed", collectionsData.errors);
+    }
+
+    collectionEdges = collectionsData.data?.collections?.edges ?? [];
+  } catch (error) {
+    console.error("Preview collections query crashed", error);
+  }
+
+  try {
+    const definitionResult = await ensurePreviewMetafieldDefinition(admin);
+    definitionExists = definitionResult.ok;
+  } catch (error) {
+    console.error("Preview metafield definition check crashed", error);
+  }
+
+  const mappedProducts = productEdges.map((edge: ProductEdge) => ({
     id: edge.node.id,
     title: edge.node.title,
     handle: edge.node.handle,
@@ -285,7 +326,7 @@ export async function previewProductsLoader({
     })),
   }));
   const normalizedSearch = search.toLocaleLowerCase();
-  const filteredProducts = mappedProducts.filter((product) => {
+  const filteredProducts = mappedProducts.filter((product: PreviewProduct) => {
     const matchesSearch =
       normalizedSearch.length === 0 ||
       product.title.toLocaleLowerCase().includes(normalizedSearch) ||
@@ -299,14 +340,14 @@ export async function previewProductsLoader({
   });
 
   const missingProductIds = filteredProducts
-    .filter((product) => !product.hasMetafield)
-    .map((product) => product.id);
+    .filter((product: PreviewProduct) => !product.hasMetafield)
+    .map((product: PreviewProduct) => product.id);
 
   return {
     products: filteredProducts,
     collectionOptions: [
       { label: "Tutte le collezioni", value: ALL_COLLECTIONS_VALUE },
-      ...collectionEdges.map((edge) => ({
+      ...collectionEdges.map((edge: CollectionEdge) => ({
         label: edge.node.title,
         value: edge.node.id,
       })),
@@ -316,7 +357,7 @@ export async function previewProductsLoader({
       collectionId,
     },
     setup: {
-      definitionExists: (data.data?.metafieldDefinition ?? null) !== null,
+      definitionExists,
       missingMetafieldCount: missingProductIds.length,
       missingProductIds,
     },
