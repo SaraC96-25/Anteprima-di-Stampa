@@ -2,12 +2,11 @@
 
 client_id = "0d0f24f826e3662f16b82c8394adb60e"
 name = "Anteprima di Stampa"
-application_url = "https://example.com"
+application_url = "https://anteprima-di-stampa-production.up.railway.app"
 embedded = true
 
 [build]
 automatically_update_urls_on_dev = true
-include_config_on_deploy = true
 
 [webhooks]
 api_version = "2026-04"
@@ -31,4 +30,8 @@ type = "boolean"
 access.admin = "merchant_read_write"
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [
+  "https://anteprima-di-stampa-production.up.railway.app/auth/callback",
+  "https://anteprima-di-stampa-production.up.railway.app/auth/shopify/callback",
+  "https://anteprima-di-stampa-production.up.railway.app/api/auth",
+]

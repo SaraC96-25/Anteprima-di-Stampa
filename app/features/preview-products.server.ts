@@ -16,6 +16,10 @@ export type PreviewProduct = {
   imageUrl: string | null;
   imageAlt: string | null;
   handle: string;
+  collections: Array<{
+    id: string;
+    title: string;
+  }>;
 };
 
 export type ProductCollectionOption = {
@@ -59,6 +63,14 @@ type ProductsQueryResponse = {
           title: string;
           handle: string;
           status: string;
+          collections: {
+            edges: Array<{
+              node: {
+                id: string;
+                title: string;
+              };
+            }>;
+          };
           featuredImage: {
             url: string;
             altText: string | null;
@@ -119,20 +131,6 @@ type AdminGraphqlClient = {
     },
   ) => Promise<Response>;
 };
-
-function buildProductQuery(search: string, collectionId: string) {
-  const filters: string[] = [];
-
-  if (search) {
-    filters.push(`title:*${search}*`);
-  }
-
-  if (collectionId && collectionId !== ALL_COLLECTIONS_VALUE) {
-    filters.push(`collection_id:${collectionId}`);
-  }
-
-  return filters.join(" AND ");
-}
 
 function normalizeCollectionId(rawValue: string | null) {
   return rawValue && rawValue.length > 0 ? rawValue : ALL_COLLECTIONS_VALUE;
@@ -211,11 +209,10 @@ export async function previewProductsLoader({
   const url = new URL(request.url);
   const search = url.searchParams.get("search")?.trim() ?? "";
   const collectionId = normalizeCollectionId(url.searchParams.get("collectionId"));
-  const productQuery = buildProductQuery(search, collectionId);
 
   const response = await admin.graphql(
     `#graphql
-      query PreviewProducts($query: String!) {
+      query PreviewProducts {
         metafieldDefinition(
           identifier: {
             ownerType: PRODUCT
@@ -232,6 +229,14 @@ export async function previewProductsLoader({
               title
               handle
               status
+              collections(first: 20) {
+                edges {
+                  node {
+                    id
+                    title
+                  }
+                }
+              }
               featuredImage {
                 url
                 altText
@@ -252,11 +257,6 @@ export async function previewProductsLoader({
         }
       }
     `,
-    {
-      variables: {
-        query: productQuery,
-      },
-    },
   );
 
   const data = (await response.json()) as ProductsQueryResponse;
@@ -269,13 +269,30 @@ export async function previewProductsLoader({
     imageAlt: edge.node.featuredImage?.altText ?? null,
     enabled: edge.node.previewEnabled?.value === "true",
     hasMetafield: edge.node.previewEnabled !== null,
+    collections: edge.node.collections.edges.map((collectionEdge) => ({
+      id: collectionEdge.node.id,
+      title: collectionEdge.node.title,
+    })),
   }));
-  const missingProductIds = mappedProducts
+  const normalizedSearch = search.toLocaleLowerCase();
+  const filteredProducts = mappedProducts.filter((product) => {
+    const matchesSearch =
+      normalizedSearch.length === 0 ||
+      product.title.toLocaleLowerCase().includes(normalizedSearch) ||
+      product.handle.toLocaleLowerCase().includes(normalizedSearch);
+
+    const matchesCollection =
+      collectionId === ALL_COLLECTIONS_VALUE ||
+      product.collections.some((collection) => collection.id === collectionId);
+
+    return matchesSearch && matchesCollection;
+  });
+  const missingProductIds = filteredProducts
     .filter((product) => !product.hasMetafield)
     .map((product) => product.id);
 
   return {
-    products: mappedProducts,
+    products: filteredProducts,
     collectionOptions: [
       { label: "Tutte le collezioni", value: ALL_COLLECTIONS_VALUE },
       ...data.data.collections.edges.map((edge) => ({
