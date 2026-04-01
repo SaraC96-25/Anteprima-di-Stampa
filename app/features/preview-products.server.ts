@@ -52,7 +52,7 @@ export type PreviewProductsActionData = {
 };
 
 type ProductsQueryResponse = {
-  data: {
+  data?: {
     metafieldDefinition: {
       id: string;
     } | null;
@@ -90,6 +90,9 @@ type ProductsQueryResponse = {
       }>;
     };
   };
+  errors?: Array<{
+    message: string;
+  }>;
 };
 
 type MetafieldsSetResponse = {
@@ -260,7 +263,14 @@ export async function previewProductsLoader({
   );
 
   const data = (await response.json()) as ProductsQueryResponse;
-  const mappedProducts = data.data.products.edges.map((edge) => ({
+  const productEdges = data.data?.products?.edges ?? [];
+  const collectionEdges = data.data?.collections?.edges ?? [];
+
+  if (data.errors?.length) {
+    console.error("Preview products query failed", data.errors);
+  }
+
+  const mappedProducts = productEdges.map((edge) => ({
     id: edge.node.id,
     title: edge.node.title,
     handle: edge.node.handle,
@@ -269,7 +279,7 @@ export async function previewProductsLoader({
     imageAlt: edge.node.featuredImage?.altText ?? null,
     enabled: edge.node.previewEnabled?.value === "true",
     hasMetafield: edge.node.previewEnabled !== null,
-    collections: edge.node.collections.edges.map((collectionEdge) => ({
+    collections: (edge.node.collections?.edges ?? []).map((collectionEdge) => ({
       id: collectionEdge.node.id,
       title: collectionEdge.node.title,
     })),
@@ -287,6 +297,7 @@ export async function previewProductsLoader({
 
     return matchesSearch && matchesCollection;
   });
+
   const missingProductIds = filteredProducts
     .filter((product) => !product.hasMetafield)
     .map((product) => product.id);
@@ -295,7 +306,7 @@ export async function previewProductsLoader({
     products: filteredProducts,
     collectionOptions: [
       { label: "Tutte le collezioni", value: ALL_COLLECTIONS_VALUE },
-      ...data.data.collections.edges.map((edge) => ({
+      ...collectionEdges.map((edge) => ({
         label: edge.node.title,
         value: edge.node.id,
       })),
@@ -305,7 +316,7 @@ export async function previewProductsLoader({
       collectionId,
     },
     setup: {
-      definitionExists: data.data.metafieldDefinition !== null,
+      definitionExists: (data.data?.metafieldDefinition ?? null) !== null,
       missingMetafieldCount: missingProductIds.length,
       missingProductIds,
     },
