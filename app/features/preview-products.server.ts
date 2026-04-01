@@ -6,6 +6,7 @@ const PREVIEW_METAFIELD_NAMESPACE = "$app";
 const PREVIEW_METAFIELD_KEY = "preview_enabled";
 const PREVIEW_METAFIELD_TYPE = "boolean";
 const ALL_COLLECTIONS_VALUE = "all";
+const PRODUCTS_PAGE_SIZE = 24;
 
 export type PreviewProduct = {
   id: string;
@@ -34,6 +35,13 @@ export type PreviewProductsLoaderData = {
     search: string;
     collectionId: string;
   };
+  pagination: {
+    hasNextPage: boolean;
+    hasPreviousPage: boolean;
+    startCursor: string | null;
+    endCursor: string | null;
+    pageSize: number;
+  };
   setup: {
     definitionExists: boolean;
     missingMetafieldCount: number;
@@ -53,39 +61,7 @@ export type PreviewProductsActionData = {
 
 type ProductsQueryResponse = {
   data?: {
-    products: {
-      edges: Array<{
-        node: {
-          id: string;
-          title: string;
-          handle: string;
-          status: string;
-          collections: {
-            edges: Array<{
-              node: {
-                id: string;
-                title: string;
-              };
-            }>;
-          };
-          featuredImage: {
-            url: string;
-            altText: string | null;
-          } | null;
-          previewEnabled: {
-            value: string;
-          } | null;
-        };
-      }>;
-    };
-    collections: {
-      edges: Array<{
-        node: {
-          id: string;
-          title: string;
-        };
-      }>;
-    };
+    products: ProductConnection;
   };
   errors?: Array<{
     message: string;
@@ -108,7 +84,52 @@ type CollectionsQueryResponse = {
   }>;
 };
 
-type ProductEdge = NonNullable<ProductsQueryResponse["data"]>["products"]["edges"][number];
+type CollectionProductsQueryResponse = {
+  data?: {
+    collection: {
+      products: ProductConnection;
+    } | null;
+  };
+  errors?: Array<{
+    message: string;
+  }>;
+};
+
+type ProductConnection = {
+  edges: ProductEdge[];
+  pageInfo: {
+    hasNextPage: boolean;
+    hasPreviousPage: boolean;
+    startCursor: string | null;
+    endCursor: string | null;
+  };
+};
+
+type ProductEdge = {
+  cursor: string;
+  node: {
+    id: string;
+    title: string;
+    handle: string;
+    status: string;
+    collections: {
+      edges: Array<{
+        node: {
+          id: string;
+          title: string;
+        };
+      }>;
+    };
+    featuredImage: {
+      url: string;
+      altText: string | null;
+    } | null;
+    previewEnabled: {
+      value: string;
+    } | null;
+  };
+};
+
 type CollectionEdge = NonNullable<CollectionsQueryResponse["data"]>["collections"]["edges"][number];
 
 type MetafieldsSetResponse = {
@@ -153,6 +174,44 @@ type AdminGraphqlClient = {
 
 function normalizeCollectionId(rawValue: string | null) {
   return rawValue && rawValue.length > 0 ? rawValue : ALL_COLLECTIONS_VALUE;
+}
+
+function normalizeCursor(rawValue: string | null) {
+  return rawValue && rawValue.length > 0 ? rawValue : null;
+}
+
+function buildPaginationVariables(after: string | null, before: string | null) {
+  if (before) {
+    return {
+      first: null,
+      after: null,
+      last: PRODUCTS_PAGE_SIZE,
+      before,
+    };
+  }
+
+  return {
+    first: PRODUCTS_PAGE_SIZE,
+    after,
+    last: null,
+    before: null,
+  };
+}
+
+function buildProductsSearchQuery(rawSearch: string) {
+  const normalizedTerms = rawSearch
+    .split(/\s+/)
+    .map((term) => term.trim())
+    .filter(Boolean)
+    .map((term) => term.replace(/["\\]/g, ""));
+
+  if (normalizedTerms.length === 0) {
+    return null;
+  }
+
+  return normalizedTerms
+    .map((term) => `(title:*${term}* OR handle:*${term}*)`)
+    .join(" AND ");
 }
 
 async function ensurePreviewMetafieldDefinition(admin: AdminGraphqlClient) {
@@ -228,50 +287,160 @@ export async function previewProductsLoader({
   const url = new URL(request.url);
   const search = url.searchParams.get("search")?.trim() ?? "";
   const collectionId = normalizeCollectionId(url.searchParams.get("collectionId"));
+  const after = normalizeCursor(url.searchParams.get("after"));
+  const before = normalizeCursor(url.searchParams.get("before"));
   let productEdges: ProductEdge[] = [];
   let collectionEdges: CollectionEdge[] = [];
   let definitionExists = false;
+  let productPageInfo: ProductConnection["pageInfo"] = {
+    hasNextPage: false,
+    hasPreviousPage: false,
+    startCursor: null,
+    endCursor: null,
+  };
 
   try {
-    const productsResponse = await admin.graphql(
-      `#graphql
-        query PreviewProducts {
-          products(first: 100, sortKey: TITLE) {
-            edges {
-              node {
-                id
-                title
-                handle
-                status
-                collections(first: 20) {
-                  edges {
-                    node {
-                      id
-                      title
+    if (collectionId !== ALL_COLLECTIONS_VALUE) {
+      const collectionProductsResponse = await admin.graphql(
+        `#graphql
+          query PreviewCollectionProducts(
+            $collectionId: ID!
+            $first: Int
+            $after: String
+            $last: Int
+            $before: String
+          ) {
+            collection(id: $collectionId) {
+              products(
+                first: $first
+                after: $after
+                last: $last
+                before: $before
+                sortKey: TITLE
+              ) {
+                edges {
+                  cursor
+                  node {
+                    id
+                    title
+                    handle
+                    status
+                    collections(first: 20) {
+                      edges {
+                        node {
+                          id
+                          title
+                        }
+                      }
+                    }
+                    featuredImage {
+                      url
+                      altText
+                    }
+                    previewEnabled: metafield(namespace: "$app", key: "preview_enabled") {
+                      value
                     }
                   }
                 }
-                featuredImage {
-                  url
-                  altText
-                }
-                previewEnabled: metafield(namespace: "$app", key: "preview_enabled") {
-                  value
+                pageInfo {
+                  hasNextPage
+                  hasPreviousPage
+                  startCursor
+                  endCursor
                 }
               }
             }
           }
-        }
-      `,
-    );
+        `,
+        {
+          variables: {
+            collectionId,
+            ...buildPaginationVariables(after, before),
+          },
+        },
+      );
 
-    const productsData = (await productsResponse.json()) as ProductsQueryResponse;
+      const collectionProductsData =
+        (await collectionProductsResponse.json()) as CollectionProductsQueryResponse;
 
-    if (productsData.errors?.length) {
-      console.error("Preview products query failed", productsData.errors);
+      if (collectionProductsData.errors?.length) {
+        console.error(
+          "Preview collection products query failed",
+          collectionProductsData.errors,
+        );
+      }
+
+      productEdges = collectionProductsData.data?.collection?.products?.edges ?? [];
+      productPageInfo =
+        collectionProductsData.data?.collection?.products?.pageInfo ?? productPageInfo;
+    } else {
+      const productsResponse = await admin.graphql(
+        `#graphql
+          query PreviewProducts(
+            $query: String
+            $first: Int
+            $after: String
+            $last: Int
+            $before: String
+          ) {
+            products(
+              first: $first
+              after: $after
+              last: $last
+              before: $before
+              sortKey: TITLE
+              query: $query
+            ) {
+              edges {
+                cursor
+                node {
+                  id
+                  title
+                  handle
+                  status
+                  collections(first: 20) {
+                    edges {
+                      node {
+                        id
+                        title
+                      }
+                    }
+                  }
+                  featuredImage {
+                    url
+                    altText
+                  }
+                  previewEnabled: metafield(namespace: "$app", key: "preview_enabled") {
+                    value
+                  }
+                }
+              }
+              pageInfo {
+                hasNextPage
+                hasPreviousPage
+                startCursor
+                endCursor
+              }
+            }
+          }
+        `,
+        {
+          variables: {
+            query: buildProductsSearchQuery(search),
+            ...buildPaginationVariables(after, before),
+          },
+        },
+      );
+
+      const productsData = (await productsResponse.json()) as ProductsQueryResponse;
+
+      if (productsData.errors?.length) {
+        console.error("Preview products query failed", productsData.errors);
+      }
+
+      productEdges = productsData.data?.products?.edges ?? [];
+      productPageInfo = productsData.data?.products?.pageInfo ?? productPageInfo;
     }
-
-    productEdges = productsData.data?.products?.edges ?? [];
   } catch (error) {
     console.error("Preview products query crashed", error);
   }
@@ -327,7 +496,9 @@ export async function previewProductsLoader({
   }));
   const normalizedSearch = search.toLocaleLowerCase();
   const filteredProducts = mappedProducts.filter((product: PreviewProduct) => {
+    const shouldApplyLocalSearch = collectionId !== ALL_COLLECTIONS_VALUE;
     const matchesSearch =
+      !shouldApplyLocalSearch ||
       normalizedSearch.length === 0 ||
       product.title.toLocaleLowerCase().includes(normalizedSearch) ||
       product.handle.toLocaleLowerCase().includes(normalizedSearch);
@@ -355,6 +526,13 @@ export async function previewProductsLoader({
     filters: {
       search,
       collectionId,
+    },
+    pagination: {
+      hasNextPage: productPageInfo.hasNextPage,
+      hasPreviousPage: productPageInfo.hasPreviousPage,
+      startCursor: productPageInfo.startCursor,
+      endCursor: productPageInfo.endCursor,
+      pageSize: PRODUCTS_PAGE_SIZE,
     },
     setup: {
       definitionExists,

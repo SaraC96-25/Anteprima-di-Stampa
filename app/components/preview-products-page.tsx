@@ -37,6 +37,13 @@ type PreviewProductsPageProps = {
     search: string;
     collectionId: string;
   };
+  pagination: {
+    hasNextPage: boolean;
+    hasPreviousPage: boolean;
+    startCursor: string | null;
+    endCursor: string | null;
+    pageSize: number;
+  };
   isIndexRoute: boolean;
   setup: {
     definitionExists: boolean;
@@ -207,6 +214,7 @@ export function PreviewProductsPage({
   products,
   collectionOptions,
   filters,
+  pagination,
   isIndexRoute,
   setup,
 }: PreviewProductsPageProps) {
@@ -236,6 +244,8 @@ export function PreviewProductsPage({
     const params = new URLSearchParams(location.search);
     params.delete("search");
     params.delete("collectionId");
+    params.delete("after");
+    params.delete("before");
     params.delete("index");
     return params;
   }, [location.search]);
@@ -255,6 +265,54 @@ export function PreviewProductsPage({
     const search = params.toString();
     return search ? `${location.pathname}?${search}` : location.pathname;
   }, [embeddedSearchParams, isIndexRoute, location.pathname]);
+
+  const paginationBaseParams = useMemo(() => {
+    const params = new URLSearchParams(embeddedSearchParams);
+
+    if (filters.search) {
+      params.set("search", filters.search);
+    }
+
+    if (filters.collectionId && filters.collectionId !== "all") {
+      params.set("collectionId", filters.collectionId);
+    }
+
+    return params;
+  }, [embeddedSearchParams, filters.collectionId, filters.search]);
+
+  const previousPageUrl = useMemo(() => {
+    if (!pagination.hasPreviousPage || !pagination.startCursor) {
+      return null;
+    }
+
+    const params = new URLSearchParams(paginationBaseParams);
+    params.set("before", pagination.startCursor);
+
+    const search = params.toString();
+    return search ? `${location.pathname}?${search}` : location.pathname;
+  }, [
+    location.pathname,
+    pagination.hasPreviousPage,
+    pagination.startCursor,
+    paginationBaseParams,
+  ]);
+
+  const nextPageUrl = useMemo(() => {
+    if (!pagination.hasNextPage || !pagination.endCursor) {
+      return null;
+    }
+
+    const params = new URLSearchParams(paginationBaseParams);
+    params.set("after", pagination.endCursor);
+
+    const search = params.toString();
+    return search ? `${location.pathname}?${search}` : location.pathname;
+  }, [
+    location.pathname,
+    pagination.endCursor,
+    pagination.hasNextPage,
+    paginationBaseParams,
+  ]);
 
   const updateProductEnabled = (id: string, enabled: boolean) => {
     setItems((currentItems) =>
@@ -475,6 +533,25 @@ export function PreviewProductsPage({
                       onRevertToggle={updateProductEnabled}
                     />
                   ))}
+
+                  <InlineStack align="space-between" blockAlign="center">
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {`Pagina alleggerita: ${pagination.pageSize} prodotti massimi per richiesta Shopify.`}
+                    </Text>
+
+                    <InlineStack gap="200">
+                      <Button url={previousPageUrl ?? undefined} disabled={!previousPageUrl}>
+                        Pagina precedente
+                      </Button>
+                      <Button
+                        url={nextPageUrl ?? undefined}
+                        disabled={!nextPageUrl}
+                        variant="primary"
+                      >
+                        Pagina successiva
+                      </Button>
+                    </InlineStack>
+                  </InlineStack>
                 </BlockStack>
               )}
             </BlockStack>
