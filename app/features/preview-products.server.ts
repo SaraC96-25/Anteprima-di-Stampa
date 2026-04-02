@@ -5,6 +5,9 @@ import { authenticate } from "../shopify.server";
 const PREVIEW_METAFIELD_NAMESPACE = "$app";
 const PREVIEW_METAFIELD_KEY = "preview_enabled";
 const PREVIEW_METAFIELD_TYPE = "boolean";
+const THEME_PREVIEW_METAFIELD_NAMESPACE = "wowstampa";
+const THEME_PREVIEW_METAFIELD_KEY = "preview_enabled";
+const THEME_PREVIEW_METAFIELD_TYPE = "boolean";
 const ALL_COLLECTIONS_VALUE = "all";
 const PRODUCTS_PAGE_SIZE = 24;
 
@@ -13,6 +16,8 @@ export type PreviewProduct = {
   title: string;
   enabled: boolean;
   hasMetafield: boolean;
+  themeEnabled: boolean;
+  hasThemeMetafield: boolean;
   status: string;
   imageUrl: string | null;
   imageAlt: string | null;
@@ -127,6 +132,9 @@ type ProductEdge = {
     previewEnabled: {
       value: string;
     } | null;
+    themePreviewEnabled: {
+      value: string;
+    } | null;
   };
 };
 
@@ -162,6 +170,33 @@ type MetafieldDefinitionCreateResponse = {
     };
   };
 };
+
+type ProductMetafieldsNodesQueryResponse = {
+  data?: {
+    nodes: Array<
+      | {
+          id: string;
+          previewEnabled: {
+            value: string;
+          } | null;
+        }
+      | null
+    >;
+  };
+  errors?: Array<{
+    message: string;
+  }>;
+};
+
+type PreviewDefinitionResult =
+  | {
+      ok: true;
+      created: boolean;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
 
 type AdminGraphqlClient = {
   graphql: (
@@ -214,7 +249,9 @@ function buildProductsSearchQuery(rawSearch: string) {
     .join(" AND ");
 }
 
-async function ensurePreviewMetafieldDefinition(admin: AdminGraphqlClient) {
+async function ensurePreviewMetafieldDefinition(
+  admin: AdminGraphqlClient,
+): Promise<PreviewDefinitionResult> {
   const currentDefinitionResponse = await admin.graphql(
     `#graphql
       query PreviewMetafieldDefinition {
@@ -280,6 +317,114 @@ async function ensurePreviewMetafieldDefinition(admin: AdminGraphqlClient) {
   return { ok: true, created: true as const };
 }
 
+async function ensureThemePreviewMetafieldDefinition(
+  admin: AdminGraphqlClient,
+): Promise<PreviewDefinitionResult> {
+  const currentDefinitionResponse = await admin.graphql(
+    `#graphql
+      query ThemePreviewMetafieldDefinition {
+        metafieldDefinition(
+          identifier: {
+            ownerType: PRODUCT
+            namespace: "wowstampa"
+            key: "preview_enabled"
+          }
+        ) {
+          id
+        }
+      }
+    `,
+  );
+
+  const currentDefinitionData =
+    (await currentDefinitionResponse.json()) as MetafieldDefinitionQueryResponse;
+
+  if (currentDefinitionData.data.metafieldDefinition) {
+    return { ok: true, created: false };
+  }
+
+  const createDefinitionResponse = await admin.graphql(
+    `#graphql
+      mutation CreateThemePreviewMetafieldDefinition {
+        metafieldDefinitionCreate(
+          definition: {
+            name: "Anteprima di stampa storefront"
+            description: "Versione storefront-safe del flag anteprima di stampa."
+            namespace: "wowstampa"
+            key: "preview_enabled"
+            type: "boolean"
+            ownerType: PRODUCT
+            access: { storefront: PUBLIC_READ }
+          }
+        ) {
+          createdDefinition {
+            id
+          }
+          userErrors {
+            message
+          }
+        }
+      }
+    `,
+  );
+
+  const createDefinitionData =
+    (await createDefinitionResponse.json()) as MetafieldDefinitionCreateResponse;
+  const definitionErrors =
+    createDefinitionData.data?.metafieldDefinitionCreate?.userErrors ?? [];
+
+  if (definitionErrors.length > 0) {
+    return {
+      ok: false,
+      error:
+        definitionErrors[0]?.message ??
+        "Shopify non ha creato la definizione storefront del metafield.",
+    };
+  }
+
+  return { ok: true, created: true };
+}
+
+async function ensurePreviewMetafieldDefinitions(
+  admin: AdminGraphqlClient,
+): Promise<PreviewDefinitionResult> {
+  const appDefinitionResult = await ensurePreviewMetafieldDefinition(admin);
+
+  if (!appDefinitionResult.ok) {
+    return appDefinitionResult;
+  }
+
+  const themeDefinitionResult = await ensureThemePreviewMetafieldDefinition(admin);
+
+  if (!themeDefinitionResult.ok) {
+    return themeDefinitionResult;
+  }
+
+  return {
+    ok: true,
+    created: appDefinitionResult.created || themeDefinitionResult.created,
+  };
+}
+
+function buildPreviewMetafieldInputs(productId: string, value: string) {
+  return [
+    {
+      ownerId: productId,
+      namespace: PREVIEW_METAFIELD_NAMESPACE,
+      key: PREVIEW_METAFIELD_KEY,
+      type: PREVIEW_METAFIELD_TYPE,
+      value,
+    },
+    {
+      ownerId: productId,
+      namespace: THEME_PREVIEW_METAFIELD_NAMESPACE,
+      key: THEME_PREVIEW_METAFIELD_KEY,
+      type: THEME_PREVIEW_METAFIELD_TYPE,
+      value,
+    },
+  ];
+}
+
 export async function previewProductsLoader({
   request,
 }: LoaderFunctionArgs): Promise<PreviewProductsLoaderData> {
@@ -338,6 +483,9 @@ export async function previewProductsLoader({
                       altText
                     }
                     previewEnabled: metafield(namespace: "$app", key: "preview_enabled") {
+                      value
+                    }
+                    themePreviewEnabled: metafield(namespace: "wowstampa", key: "preview_enabled") {
                       value
                     }
                   }
@@ -413,6 +561,9 @@ export async function previewProductsLoader({
                   previewEnabled: metafield(namespace: "$app", key: "preview_enabled") {
                     value
                   }
+                  themePreviewEnabled: metafield(namespace: "wowstampa", key: "preview_enabled") {
+                    value
+                  }
                 }
               }
               pageInfo {
@@ -474,7 +625,7 @@ export async function previewProductsLoader({
   }
 
   try {
-    const definitionResult = await ensurePreviewMetafieldDefinition(admin);
+    const definitionResult = await ensurePreviewMetafieldDefinitions(admin);
     definitionExists = definitionResult.ok;
   } catch (error) {
     console.error("Preview metafield definition check crashed", error);
@@ -489,6 +640,8 @@ export async function previewProductsLoader({
     imageAlt: edge.node.featuredImage?.altText ?? null,
     enabled: edge.node.previewEnabled?.value === "true",
     hasMetafield: edge.node.previewEnabled !== null,
+    themeEnabled: edge.node.themePreviewEnabled?.value === "true",
+    hasThemeMetafield: edge.node.themePreviewEnabled !== null,
     collections: (edge.node.collections?.edges ?? []).map((collectionEdge) => ({
       id: collectionEdge.node.id,
       title: collectionEdge.node.title,
@@ -511,7 +664,12 @@ export async function previewProductsLoader({
   });
 
   const missingProductIds = filteredProducts
-    .filter((product: PreviewProduct) => !product.hasMetafield)
+    .filter(
+      (product: PreviewProduct) =>
+        !product.hasMetafield ||
+        !product.hasThemeMetafield ||
+        product.themeEnabled !== product.enabled,
+    )
     .map((product: PreviewProduct) => product.id);
 
   return {
@@ -550,7 +708,7 @@ export async function previewProductsAction({
   const mode = formData.get("mode");
 
   if (mode === "setup") {
-    const definitionResult = await ensurePreviewMetafieldDefinition(admin);
+    const definitionResult = await ensurePreviewMetafieldDefinitions(admin);
 
     if (!definitionResult.ok) {
       return {
@@ -573,6 +731,57 @@ export async function previewProductsAction({
       };
     }
 
+    const currentMetafieldsResponse = await admin.graphql(
+      `#graphql
+        query PreviewSetupProducts($ids: [ID!]!) {
+          nodes(ids: $ids) {
+            ... on Product {
+              id
+              previewEnabled: metafield(namespace: "$app", key: "preview_enabled") {
+                value
+              }
+            }
+          }
+        }
+      `,
+      {
+        variables: {
+          ids: productIds,
+        },
+      },
+    );
+
+    const currentMetafieldsData =
+      (await currentMetafieldsResponse.json()) as ProductMetafieldsNodesQueryResponse;
+
+    if (currentMetafieldsData.errors?.length) {
+      return {
+        ok: false,
+        mode: "setup",
+        error:
+          currentMetafieldsData.errors[0]?.message ??
+          "Shopify non ha letto i metafield correnti dei prodotti.",
+      };
+    }
+
+    const currentValuesByProductId = new Map(
+      (currentMetafieldsData.data?.nodes ?? [])
+        .filter(
+          (
+            node,
+          ): node is {
+            id: string;
+            previewEnabled: {
+              value: string;
+            } | null;
+          } => node !== null,
+        )
+        .map((node) => [
+          node.id,
+          node.previewEnabled?.value === "true" ? "true" : "false",
+        ]),
+    );
+
     const response = await admin.graphql(
       `#graphql
         mutation InitializePreviewMetafields($metafields: [MetafieldsSetInput!]!) {
@@ -585,13 +794,12 @@ export async function previewProductsAction({
       `,
       {
         variables: {
-          metafields: productIds.map((productId) => ({
-            ownerId: productId,
-            namespace: PREVIEW_METAFIELD_NAMESPACE,
-            key: PREVIEW_METAFIELD_KEY,
-            type: PREVIEW_METAFIELD_TYPE,
-            value: "false",
-          })),
+          metafields: productIds.flatMap((productId) =>
+            buildPreviewMetafieldInputs(
+              productId,
+              currentValuesByProductId.get(productId) ?? "false",
+            ),
+          ),
         },
       },
     );
@@ -630,7 +838,7 @@ export async function previewProductsAction({
     };
   }
 
-  const definitionResult = await ensurePreviewMetafieldDefinition(admin);
+  const definitionResult = await ensurePreviewMetafieldDefinitions(admin);
 
   if (!definitionResult.ok) {
     return {
@@ -654,15 +862,7 @@ export async function previewProductsAction({
     `,
     {
       variables: {
-        metafields: [
-          {
-            ownerId: productId,
-            namespace: PREVIEW_METAFIELD_NAMESPACE,
-            key: PREVIEW_METAFIELD_KEY,
-            type: PREVIEW_METAFIELD_TYPE,
-            value: enabled,
-          },
-        ],
+        metafields: buildPreviewMetafieldInputs(productId, enabled),
       },
     },
   );
