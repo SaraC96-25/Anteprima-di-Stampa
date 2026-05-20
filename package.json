@@ -3,6 +3,8 @@
   "private": true,
   "scripts": {
     "build": "react-router build",
+    "render-build": "prisma generate && react-router build",
+    "render-start": "prisma migrate deploy && react-router-serve ./build/server/index.js",
     "dev": "shopify app dev",
     "config:link": "shopify app config link",
     "generate": "shopify app generate",

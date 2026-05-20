@@ -2,18 +2,19 @@ services:
   - type: web
     name: anteprima-di-stampa
     runtime: node
-    # SQLite sessions need Render's persistent disk support, which requires a paid instance.
-    plan: starter
+    plan: free
     autoDeploy: true
-    buildCommand: npm ci && npm run build
-    startCommand: npm run setup && npm run start
+    buildCommand: npm ci && npm run render-build
+    startCommand: npm run render-start
     envVars:
       - key: NODE_VERSION
         value: 22.12.0
       - key: NODE_ENV
         value: production
       - key: DATABASE_URL
-        value: file:/var/data/dev.sqlite
+        sync: false
+      - key: DIRECT_URL
+        sync: false
       - key: SHOPIFY_APP_URL
         sync: false
       - key: SHOPIFY_API_KEY
@@ -22,7 +23,3 @@ services:
         sync: false
       - key: SCOPES
         value: read_products,write_products
-    disk:
-      name: sqlite-data
-      mountPath: /var/data
-      sizeGB: 1
