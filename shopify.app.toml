@@ -2,7 +2,7 @@
 
 client_id = "0d0f24f826e3662f16b82c8394adb60e"
 name = "Anteprima di Stampa"
-application_url = "https://anteprima-di-stampa-production.up.railway.app"
+application_url = "https://anteprima-di-stampa.onrender.com"
 embedded = true
 
 [build]
@@ -31,7 +31,7 @@ access.admin = "merchant_read_write"
 
 [auth]
 redirect_urls = [
-  "https://anteprima-di-stampa-production.up.railway.app/auth/callback",
-  "https://anteprima-di-stampa-production.up.railway.app/auth/shopify/callback",
-  "https://anteprima-di-stampa-production.up.railway.app/api/auth",
+  "https://anteprima-di-stampa.onrender.com/auth/callback",
+  "https://anteprima-di-stampa.onrender.com/auth/shopify/callback",
+  "https://anteprima-di-stampa.onrender.com/api/auth",
 ]

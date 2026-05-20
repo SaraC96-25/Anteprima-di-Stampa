@@ -1,41 +1,29 @@
-# Deploy su GitHub e Render
+# Deploy su Render
 
-## 1. Pubblica il progetto su GitHub
+Questa app era configurata su Railway:
 
-Da `/Users/sara/anteprima-di-stampa`:
-
-```bash
-git add .
-git commit -m "Initial Shopify embedded app"
-git branch -M main
+```text
+https://anteprima-di-stampa-production.up.railway.app
 ```
 
-Poi crea un repository vuoto su GitHub, per esempio `anteprima-di-stampa`, e collega il remote:
+La configurazione Shopify ora deve puntare al dominio Render:
 
-```bash
-git remote add origin git@github.com:TUO-USERNAME/anteprima-di-stampa.git
-git push -u origin main
+```text
+https://anteprima-di-stampa.onrender.com
 ```
 
-Se preferisci HTTPS:
-
-```bash
-git remote add origin https://github.com/TUO-USERNAME/anteprima-di-stampa.git
-git push -u origin main
-```
-
-## 2. Crea il servizio su Render
+## 1. Crea il servizio su Render
 
 1. Vai su Render
 2. `New +` -> `Blueprint`
-3. Seleziona il repository GitHub
+3. Seleziona il repository GitHub `SaraC96-25/Anteprima-di-Stampa`
 4. Render leggerà `render.yaml`
 
-## 3. Configura le env richieste su Render
+## 2. Configura le env richieste su Render
 
 Imposta questi valori:
 
-- `SHOPIFY_APP_URL`
+- `SHOPIFY_APP_URL=https://anteprima-di-stampa.onrender.com`
 - `SHOPIFY_API_KEY`
 - `SHOPIFY_API_SECRET`
 
@@ -45,23 +33,27 @@ Gli altri sono già nel blueprint:
 - `SCOPES=read_products,write_products`
 - `DATABASE_URL=file:/var/data/dev.sqlite`
 
-## 4. Quando Render genera il dominio pubblico
+## 3. Verifica gli URL Shopify
 
-Esempio:
-
-`https://anteprima-di-stampa.onrender.com`
-
-Aggiorna `shopify.app.toml` con:
+In `shopify.app.toml` devono esserci:
 
 - `application_url = "https://anteprima-di-stampa.onrender.com"`
-- `redirect_urls` coerenti con quel dominio
+- `https://anteprima-di-stampa.onrender.com/auth/callback`
+- `https://anteprima-di-stampa.onrender.com/auth/shopify/callback`
+- `https://anteprima-di-stampa.onrender.com/api/auth`
 
-## 5. Pubblica la config Shopify
+## 4. Pubblica la config Shopify
 
 ```bash
 npm run deploy
 ```
 
-## 6. Reinstalla l'app sullo shop ufficiale
+## 5. Reinstalla l'app sullo shop ufficiale
 
 Apri l'app dal link di installazione aggiornato dopo il deploy.
+
+## Nota sul piano Render
+
+Questa app usa SQLite per salvare le sessioni OAuth Shopify. Su Render, SQLite deve stare su un persistent disk, quindi il blueprint usa `plan: starter`.
+
+Per usare Render Free senza disco persistente bisogna prima spostare le sessioni su Postgres, ad esempio Supabase o Render Postgres. Render Postgres Free pero scade dopo 30 giorni.

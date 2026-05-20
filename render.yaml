@@ -2,6 +2,7 @@ services:
   - type: web
     name: anteprima-di-stampa
     runtime: node
+    # SQLite sessions need Render's persistent disk support, which requires a paid instance.
     plan: starter
     autoDeploy: true
     buildCommand: npm ci && npm run build
